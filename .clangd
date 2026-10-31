@@ -1,0 +1,7 @@
+CompileFlags:
+  Add:
+    - -isystem/home/max/.platformio/packages/toolchain-rp2040-earlephilhower/arm-none-eabi/include/c++/16.1.0
+    - -isystem/home/max/.platformio/packages/toolchain-rp2040-earlephilhower/arm-none-eabi/include/c++/16.1.0/arm-none-eabi/thumb
+    - -isystem/home/max/.platformio/packages/toolchain-rp2040-earlephilhower/arm-none-eabi/include/c++/16.1.0/backward
+    - -isystem/home/max/.platformio/packages/toolchain-rp2040-earlephilhower/lib/gcc/arm-none-eabi/16.1.0/include-fixed
+    - -isystem/home/max/.platformio/packages/toolchain-rp2040-earlephilhower/arm-none-eabi/include
