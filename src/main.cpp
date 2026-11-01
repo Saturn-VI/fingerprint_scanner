@@ -247,7 +247,7 @@ int getTypedId() {
   if (fCR.ec == std::errc::invalid_argument ||
     fCR.ec == std::errc::result_out_of_range ||
     fCR.ptr != end ||
-    value == 0
+    value <= 0
   ) {
     return -2;
   }
