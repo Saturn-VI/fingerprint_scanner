@@ -122,6 +122,19 @@ void clearInput() {
   lcd.print(SIXTEEN_SPACES);
 }
 
+void clearAndShowError(String error, int displayDuration) {
+  inputEnabled = false;
+  clearInput();
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("ERROR");
+  lcd.setCursor(0, 1);
+  lcd.print(error);
+  delay(displayDuration);
+  keypad.flush();
+  inputEnabled = true;
+}
+
 void updateTypedString() {
   if (!inputEnabled) {
     keypad.flush();
@@ -195,12 +208,49 @@ void readPrintInit() {
   lcd.clear();
   lcd.setCursor(0, 0);
   lcd.print("READ");
+  keypad.flush();
   clearInput();
   inputEnabled = true;
 }
 
 void readPrint() {
   // if fingerprint, check
+  int p = finger.getImage();
+  if (p == FINGERPRINT_NOFINGER) {
+    return;
+  }
+  if (p != FINGERPRINT_OK) {
+    clearAndShowError("Scan failed", 2000);
+    readPrintInit();
+    return;
+  }
+
+  p = finger.image2Tz();
+  if (p != FINGERPRINT_OK) {
+    clearAndShowError("Hashing failed", 2000);
+    readPrintInit();
+    return;
+  }
+
+  p = finger.fingerFastSearch();
+  if (p != FINGERPRINT_OK) {
+    clearAndShowError("No match found", 2000);
+    readPrintInit();
+    return;
+  }
+  if (finger.confidence < 100) {
+    clearAndShowError("Low confidence", 2000);
+    readPrintInit();
+    return;
+  }
+
+  int foundId = finger.fingerID;
+  int actualId = idMap[foundId];
+
+  // todo print id to screen
+  // todo print id to serial
+  // todo type ID
+  
   // type id if match
   // error on screen if not
 }
@@ -217,6 +267,7 @@ void registerPrintInit() {
   lcd.clear();
   lcd.setCursor(0, 0);
   lcd.print("REGISTER");
+  keypad.flush();
   clearInput();
   inputEnabled = true;
   idPrompted = false;
@@ -251,13 +302,7 @@ void registerPrint() {
       fCR.ec == std::errc::result_out_of_range ||
       value == 0
     ) {
-      clearInput();
-      lcd.clear();
-      lcd.setCursor(0, 0);
-      lcd.print("ERROR");
-      lcd.setCursor(0, 1);
-      lcd.print("ID parse failed");
-      delay(1500);
+      clearAndShowError("ID parse failed", 2000);
       registerPrintInit();
       return;
     } else {
@@ -287,25 +332,13 @@ void registerPrint() {
       return;
     }
     if (p != FINGERPRINT_OK) {
-      clearInput();
-      lcd.clear();
-      lcd.setCursor(0, 0);
-      lcd.print("ERROR");
-      lcd.setCursor(0, 1);
-      lcd.print("Imaging failed");
-      delay(1500);
+      clearAndShowError("Imaging failed", 2000);
       registerPrintInit();
       return;
     }
     p = finger.image2Tz(1);
     if (p != FINGERPRINT_OK) {
-      clearInput();
-      lcd.clear();
-      lcd.setCursor(0, 0);
-      lcd.print("ERROR");
-      lcd.setCursor(0, 1);
-      lcd.print("Hashing failed");
-      delay(1500);
+      clearAndShowError("Hashing failed", 2000);
       registerPrintInit();
       return;
     }
@@ -333,25 +366,13 @@ void registerPrint() {
       return;
     }
     if (p != FINGERPRINT_OK) {
-      clearInput();
-      lcd.clear();
-      lcd.setCursor(0, 0);
-      lcd.print("ERROR");
-      lcd.setCursor(0, 1);
-      lcd.print("Imaging failed");
-      delay(1500);
+      clearAndShowError("Imaging failed", 200);
       registerPrintInit();
       return;
     }
     p = finger.image2Tz(2);
     if (p != FINGERPRINT_OK) {
-      clearInput();
-      lcd.clear();
-      lcd.setCursor(0, 0);
-      lcd.print("ERROR");
-      lcd.setCursor(0, 1);
-      lcd.print("Hashing failed");
-      delay(1500);
+      clearAndShowError("Hashing failed", 200);
       registerPrintInit();
       return;
     }
@@ -367,13 +388,7 @@ void registerPrint() {
   // save
   int p = finger.createModel();
   if (p != FINGERPRINT_OK) {
-    clearInput();
-    lcd.clear();
-    lcd.setCursor(0, 0);
-    lcd.print("ERROR");
-    lcd.setCursor(0, 1);
-    lcd.print("Bad print match");
-    delay(2000);
+    clearAndShowError("Bad print match", 2000);
     registerPrintInit();
     return;
   }
@@ -381,13 +396,7 @@ void registerPrint() {
   int indexId = getFirstOpenID();
   p = finger.storeModel(indexId);
   if (p != FINGERPRINT_OK) {
-    clearInput();
-    lcd.clear();
-    lcd.setCursor(0, 0);
-    lcd.print("ERROR");
-    lcd.setCursor(0, 1);
-    lcd.print("Storing failed");
-    delay(2000);
+    clearAndShowError("Storing failed", 2000);
     registerPrintInit();
     return;
   }
@@ -405,6 +414,7 @@ void removePrintInit() {
   lcd.clear();
   lcd.setCursor(0, 0);
   lcd.print("REMOVE");
+  keypad.flush();
   clearInput();
   inputEnabled = true;
 }
