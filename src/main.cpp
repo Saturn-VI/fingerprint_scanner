@@ -1,10 +1,12 @@
 #include <Arduino.h>
+#include "Adafruit_Fingerprint.h"
 #include "Adafruit_LiquidCrystal.h"
 #include "Adafruit_TCA8418.h"
+#include "SerialUSB.h"
 #include "api/String.h"
-
-Adafruit_LiquidCrystal lcd(0);
-Adafruit_TCA8418 keypad;
+#include "Keyboard.h"
+#include "main.h"
+#include <map>
 
 #define ROWS 4
 #define COLS 4
@@ -16,9 +18,26 @@ char keymap[COLS][ROWS] = {
     {'*', '0', '#', 'D'},
 };
 
+#define fingerprintSerial Serial1
+
+Adafruit_LiquidCrystal lcd(0);
+Adafruit_TCA8418 keypad;
+Adafruit_Fingerprint finger = Adafruit_Fingerprint(&fingerprintSerial);
+
+enum class State {
+  Reading,
+  Registering,
+  Removing
+};
+
 String str = "";
+State lastState;
+State curState = State::Reading;
+// key: fingerprint id, value: id to type
+std::map<int, int> idMap;
 
 void setup() {
+  Keyboard.begin();
   Serial.begin(115200);
   while(!Serial) {
     delay(10);
@@ -38,13 +57,43 @@ void setup() {
   keypad.matrix(4, 4);
   keypad.flush();
 
-  Serial.println("LCD & keypad init'd.");
+  finger.begin(57600);
+  if (finger.verifyPassword()) {
+    Serial.println("Found fingerprint sensor!");
+  } else {
+    Serial.println("Did not find fingerprint sensor :(");
+    while (1);
+  }
+  // Remove once fingerprints are saved to flash
+  finger.emptyDatabase();
 
-  // Print a message to the LCD.
-  lcd.print("hello, world!");
+  Serial.println("LCD, keypad, & fingerprint sensor init'd.");
+
+  readPrintInit();
 }
 
 void loop() {
+  updateTypedString();
+  lcd.setCursor(0, 1);
+  lcd.print(str);
+
+  lastState = curState;
+  curState = getCurrentState();
+
+  switch (curState) {
+    case State::Reading:
+      readPrintLoop();
+      break;
+    case State::Registering:
+      registerPrintLoop();
+      break;
+    case State::Removing:
+      removePrintLoop();
+      break;
+  }
+}
+
+void updateTypedString() {
   if (keypad.available() > 0) {
     int k = keypad.getEvent();
     // keys are 1, 2, 3, 4, etc (row 2 is 11, 12, 13, ...)
@@ -56,10 +105,7 @@ void loop() {
     int row = k / 10;
     int col = (k % 10) - 1;
     char character = keymap[row][col];
-
     if (pressed) {
-      Serial.print("pressed ");
-      Serial.println(character);
       if (character == 'A') {
         if (str.length() > 0) {
           str.remove(str.length() - 1);
@@ -75,8 +121,74 @@ void loop() {
       }
     }
   }
-  // set the cursor to column 0, line 1
-  // (note: line 1 is the second row, since counting begins with 0):
-  lcd.setCursor(0, 1);
-  lcd.print(str);
+}
+
+State getCurrentState() {
+  // immediately quit as state change must have at least *, char, and #
+  if (str.length() < 3) {
+    return curState;
+  }
+
+  // has asterisk been pressed to indicate state change?
+  if (!str.startsWith("*")) {
+    return curState;
+  }
+
+  // has pound been pressed to indicate enter?
+  if (!str.endsWith("#")) {
+    return curState;
+  }
+
+  char commandChar = str.charAt(1);
+  str = "";
+  lcd.clear();
+  switch (commandChar) {
+    case '1':
+      readPrintInit();
+      return State::Reading;
+    case '2':
+      registerPrintInit();
+      return State::Registering;
+    case '3':
+      removePrintInit();
+      return State::Removing;
+    default:
+      return curState;
+  }
+}
+
+void readPrintInit() {
+  lcd.setCursor(0, 0);
+  lcd.print("READ");
+}
+
+void readPrintLoop() {
+  // if fingerprint, check
+  // type id if match
+  // error on screen if not
+}
+
+void registerPrintInit() {
+  lcd.setCursor(0, 0);
+  lcd.print("REGISTER");
+}
+
+void registerPrintLoop() {
+  // wait for id to be typed
+  // prompt for fingerprint
+  // get first scan
+  // prompt again
+  // scan again
+  // save
+}
+
+void removePrintInit() {
+  lcd.setCursor(0, 0);
+  lcd.print("REMOVE");
+}
+
+void removePrintLoop() {
+  // prompt to delete by id or fingerprint
+  // ask for id or fingerprint
+  // delete key & value
 }
