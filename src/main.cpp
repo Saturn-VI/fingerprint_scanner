@@ -1,3 +1,4 @@
+#include <Arduino.h>
 #include "Adafruit_Fingerprint.h"
 #include "Adafruit_LiquidCrystal.h"
 #include "Adafruit_TCA8418.h"
@@ -98,10 +99,12 @@ void loop() {
   }
 }
 
-boolean textInputExpected() {
+bool textInputExpected() {
   return (
     (curState == State::Reading) ||
-    (curState == State::Registering && !idTyped)
+    (curState == State::Registering && idPrompted && !idTyped) ||
+    (curState == State::Removing && idRemovalPrompted && !idToRemoveGiven) ||
+    (curState == State::Removing && confirmationPrompted && !confirmationGiven)
   );
 }
 
@@ -124,6 +127,7 @@ int getFirstOpenID() {
 }
 
 void clearInput() {
+  keypad.flush();
   str = "";
   lcd.setCursor(0, 1);
   lcd.print(SIXTEEN_SPACES);
@@ -140,7 +144,7 @@ void clearAndShowError(String error, int displayDuration) {
   keypad.flush();
 }
 
-boolean cancelRequested = false;
+bool cancelRequested = false;
 
 void updateTypedString() {
   if (keypad.available() > 0) {
@@ -161,6 +165,7 @@ void updateTypedString() {
 
       if (!textInputExpected()) {
         str = "";
+        keypad.flush();
         return;
       }
 
@@ -223,6 +228,28 @@ State getCurrentState() {
     default:
       return curState;
   }
+}
+
+// -1 = nothing entered
+// -2 = parse failed
+// >0 = parse succeeded, no promises about validity
+int getTypedId() {
+  if (!str.endsWith("#")) {
+    return -1;
+  }
+  String sub = str.substring(0, str.indexOf("#"));
+  const char* start = sub.c_str();
+  const char* end = start + sub.length();
+  int value = 0;
+  std::from_chars_result fCR = std::from_chars(start, end, value);
+  if (fCR.ec == std::errc::invalid_argument ||
+    fCR.ec == std::errc::result_out_of_range ||
+    value == 0
+  ) {
+    return -2;
+  }
+
+  return value;
 }
 
 void readPrintInit() {
@@ -306,18 +333,12 @@ void registerPrint() {
       clearInput();
       idPrompted = true;
     }
-    if (!str.endsWith("#")) {
+
+    int value = getTypedId();
+    if (value == -1) {
       return;
     }
-    String sub = str.substring(0, str.indexOf("#"));
-    const char* start = sub.c_str();
-    const char* end = start + sub.length();
-    int value = 0;
-    std::from_chars_result fCR = std::from_chars(start, end, value);
-    if (fCR.ec == std::errc::invalid_argument ||
-      fCR.ec == std::errc::result_out_of_range ||
-      value == 0
-    ) {
+    if (value == -2) {
       clearAndShowError("ID parse failed", 2000);
       registerPrintInit();
       return;
@@ -445,16 +466,124 @@ void registerPrint() {
   return;
 }
 
-void removePrintInit() {
+void showRemoveHeader() {
   lcd.clear();
   lcd.setCursor(0, 0);
   lcd.print("REMOVE");
+}
+
+void removePrintInit() {
+  showRemoveHeader();
   keypad.flush();
   clearInput();
+  idRemovalPrompted = false;
+  idToRemoveGiven = false;
+  idToRemove = 0;
+  confirmationPrompted = false;
+  confirmationGiven = false;
 }
 
 void removePrint() {
-  // prompt to delete by id or fingerprint
   // ask for id or fingerprint
+  if (!idRemovalPrompted) {
+    clearInput();
+    lcd.setCursor(0, 1);
+    lcd.print("Type ID or scan");
+    delay(1500);
+    clearInput();
+    idRemovalPrompted = true;
+  }
+
+  if (!idToRemoveGiven) {
+    int typed = getTypedId();
+    int p = finger.getImage();
+
+    if (typed == -2) {
+      clearAndShowError("ID parse failed", 2000);
+      removePrintInit();
+      return;
+    } else if (typed != -1) {
+      for (const auto& [key, value] : idMap) {
+        if (value == typed) {
+          idToRemoveGiven = true;
+          idToRemove = key;
+          return;
+        }
+      }
+      clearAndShowError("ID not found", 2000);
+      removePrintInit();
+      return;
+    }
+
+    if (p != FINGERPRINT_NOFINGER && p != FINGERPRINT_OK) {
+      clearAndShowError("Scan failed", 2000);
+      removePrintInit();
+      return;
+    } else if (p != FINGERPRINT_NOFINGER) {
+      p = finger.image2Tz();
+      if (p != FINGERPRINT_OK) {
+        clearAndShowError("Hashing failed", 2000);
+        removePrintInit();
+        return;
+      }
+
+      p = finger.fingerSearch();
+      if (p != FINGERPRINT_OK) {
+        clearAndShowError("No match found", 2000);
+        removePrintInit();
+        return;
+      }
+      if (finger.confidence < 50) {
+        clearAndShowError("Low confidence", 2000);
+        removePrintInit();
+        return;
+      }
+
+      idToRemoveGiven = true;
+      idToRemove = finger.fingerID;
+    }
+
+    // no id typed and no finger read
+    return;
+  }
+
+  // prompt confirmation
+  if (!confirmationPrompted) {
+    clearInput();
+    lcd.setCursor(0, 1);
+    lcd.print("Remove " + String(idMap[idToRemove]));
+    delay(2500);
+    clearInput();
+    lcd.setCursor(0, 1);
+    lcd.print("0#=no, 1#=yes");
+    delay(3000);
+    clearInput();
+    confirmationPrompted = true;
+    return;
+  }
+
+  // cancel
+  if (str.equals("0#")) {
+    cancelRequested = true;
+    return;
+  }
+
   // delete key & value
+  if (str.equals("1#")) {
+    int p = finger.deleteModel(idToRemove);
+    if (p != FINGERPRINT_OK) {
+      clearAndShowError("Deletion failed", 2000);
+      confirmationPrompted = false;
+      showRemoveHeader();
+      return;
+    }
+    clearInput();
+    lcd.setCursor(0, 1);
+    lcd.print("Deleted!");
+    confirmationGiven = true;
+    delay(2000);
+    curState = State::Reading;
+    readPrintInit();
+    return;
+  }
 }

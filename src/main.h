@@ -1,23 +1,26 @@
-#include <Arduino.h>
-
 enum class State;
 void updateTypedString();
 State getCurrentState();
 
-boolean textInputExpected();
+bool textInputExpected();
 
 void readPrintInit();
 void readPrint();
 
-inline boolean idPrompted;
-inline boolean idTyped;
+inline bool idPrompted;
+inline bool idTyped;
 inline int idToRegister;
-inline boolean firstScanPrompted;
-inline boolean firstScanComplete;
-inline boolean secondScanComplete;
-inline boolean secondScanPrompted;
+inline bool firstScanPrompted;
+inline bool firstScanComplete;
+inline bool secondScanComplete;
+inline bool secondScanPrompted;
 void registerPrintInit();
 void registerPrint();
 
+inline bool idRemovalPrompted;
+inline bool idToRemoveGiven;
+inline int idToRemove;
+inline bool confirmationPrompted;
+inline bool confirmationGiven;
 void removePrintInit();
 void removePrint();
