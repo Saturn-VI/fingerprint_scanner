@@ -1,4 +1,3 @@
-#include <Arduino.h>
 #include "Adafruit_Fingerprint.h"
 #include "Adafruit_LiquidCrystal.h"
 #include "Adafruit_TCA8418.h"
@@ -37,7 +36,6 @@ enum class State {
 String str = "";
 State lastState;
 State curState = State::Reading;
-boolean inputEnabled = true;
 // key: fingerprint id, value: id to type
 std::map<int, int> idMap;
 
@@ -79,8 +77,10 @@ void setup() {
 
 void loop() {
   updateTypedString();
-  lcd.setCursor(0, 1);
-  lcd.print(str);
+  if (textInputExpected()) {
+    lcd.setCursor(0, 1);
+    lcd.print(str);
+  }
 
   lastState = curState;
   curState = getCurrentState();
@@ -98,17 +98,24 @@ void loop() {
   }
 }
 
+boolean textInputExpected() {
+  return (
+    (curState == State::Reading) ||
+    (curState == State::Registering && !idTyped)
+  );
+}
+
 int getFirstOpenID() {
   if (idMap.empty()) {
     return 0;
   }
 
-  int prevKey = idMap.begin()->first;
+  int expectedKey = 1;
   for (const auto& [key, value] : idMap) {
-    if (key - prevKey > 1) {
-      return key - 1;
+    if (key > expectedKey) {
+      return expectedKey;
     }
-    prevKey = key;
+    expectedKey++;
   }
   // id range up to end of map is packed
   // so we get the last index plus one
@@ -123,7 +130,6 @@ void clearInput() {
 }
 
 void clearAndShowError(String error, int displayDuration) {
-  inputEnabled = false;
   clearInput();
   lcd.clear();
   lcd.setCursor(0, 0);
@@ -132,15 +138,11 @@ void clearAndShowError(String error, int displayDuration) {
   lcd.print(error);
   delay(displayDuration);
   keypad.flush();
-  inputEnabled = true;
 }
 
-void updateTypedString() {
-  if (!inputEnabled) {
-    keypad.flush();
-    return;
-  }
+boolean cancelRequested = false;
 
+void updateTypedString() {
   if (keypad.available() > 0) {
     int k = keypad.getEvent();
     // keys are 1, 2, 3, 4, etc (row 2 is 11, 12, 13, ...)
@@ -153,6 +155,15 @@ void updateTypedString() {
     int col = (k % 10) - 1;
     char character = keymap[row][col];
     if (pressed) {
+      if (character == 'D' && curState != State::Reading) {
+        cancelRequested = true;
+      }
+
+      if (!textInputExpected()) {
+        str = "";
+        return;
+      }
+
       if (character == 'A') {
         if (str.length() > 0) {
           str.remove(str.length() - 1);
@@ -171,6 +182,16 @@ void updateTypedString() {
 }
 
 State getCurrentState() {
+  if (cancelRequested) {
+    cancelRequested = false;
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("CANCELLED");
+    delay(1000);
+    readPrintInit();
+    return State::Reading;
+  }
+
   // immediately quit as state change must have at least *, char, and #
   if (str.length() < 3) {
     return curState;
@@ -210,7 +231,6 @@ void readPrintInit() {
   lcd.print("READ");
   keypad.flush();
   clearInput();
-  inputEnabled = true;
 }
 
 void readPrint() {
@@ -232,7 +252,7 @@ void readPrint() {
     return;
   }
 
-  p = finger.fingerFastSearch();
+  p = finger.fingerSearch();
   if (p != FINGERPRINT_OK) {
     clearAndShowError("No match found", 2000);
     readPrintInit();
@@ -250,25 +270,22 @@ void readPrint() {
   String message = "Found " + String(actualId);
   lcd.setCursor(0, 1);
   lcd.print(message);
-  Serial.println(message);
+  Serial.println(message + " Conf: " + String(finger.confidence));
   Keyboard.println(actualId);
+  delay(1000);
+  readPrintInit();
 }
 
-boolean idPrompted;
-boolean idTyped;
-int idToRegister;
-boolean firstScanPrompted;
-boolean firstScanComplete;
-boolean secondScanPrompted;
-boolean secondScanComplete;
-
-void registerPrintInit() {
+void showRegisterHeader() {
   lcd.clear();
   lcd.setCursor(0, 0);
   lcd.print("REGISTER");
+}
+
+void registerPrintInit() {
+  showRegisterHeader();
   keypad.flush();
   clearInput();
-  inputEnabled = true;
   idPrompted = false;
   idTyped = false;
   idToRegister = 0;
@@ -313,7 +330,6 @@ void registerPrint() {
     }
     idTyped = true;
     idToRegister = value;
-    inputEnabled = false;
   }
 
   // prompt for fingerprint
@@ -332,22 +348,29 @@ void registerPrint() {
     }
     if (p != FINGERPRINT_OK) {
       clearAndShowError("Imaging failed", 2000);
-      registerPrintInit();
+      showRegisterHeader();
+      firstScanPrompted = false;
       return;
     }
     p = finger.image2Tz(1);
     if (p != FINGERPRINT_OK) {
       clearAndShowError("Hashing failed", 2000);
-      registerPrintInit();
+      showRegisterHeader();
+      firstScanPrompted = false;
       return;
     }
     // first scan done!
     clearInput();
     lcd.setCursor(0, 1);
     lcd.print("Remove finger");
+    // in an ideal world, we would wait for finger removal
+    // however, trying to wait for removal in such a manner usually
+    // doesn't work, as the scanner tends to not see a finger more
+    // often than not
     delay(1500);
     clearInput();
     firstScanComplete = true;
+    return;
   }
 
   // prompt again
@@ -365,20 +388,24 @@ void registerPrint() {
       return;
     }
     if (p != FINGERPRINT_OK) {
-      clearAndShowError("Imaging failed", 200);
-      registerPrintInit();
+      clearAndShowError("Imaging failed", 2000);
+      showRegisterHeader();
+      secondScanPrompted = false;
       return;
     }
     p = finger.image2Tz(2);
     if (p != FINGERPRINT_OK) {
-      clearAndShowError("Hashing failed", 200);
-      registerPrintInit();
+      clearAndShowError("Hashing failed", 2000);
+      showRegisterHeader();
+      secondScanPrompted = false;
       return;
     }
     // second scan done!
     clearInput();
     lcd.setCursor(0, 1);
     lcd.print("Remove finger");
+    // see comment on delay for first scan for why we don't detect when
+    // the user removes their finger
     delay(1500);
     clearInput();
     secondScanComplete = true;
@@ -388,7 +415,11 @@ void registerPrint() {
   int p = finger.createModel();
   if (p != FINGERPRINT_OK) {
     clearAndShowError("Bad print match", 2000);
-    registerPrintInit();
+    showRegisterHeader();
+    firstScanPrompted = false;
+    firstScanPrompted = false;
+    secondScanPrompted = false;
+    secondScanComplete = false;
     return;
   }
 
@@ -396,9 +427,14 @@ void registerPrint() {
   p = finger.storeModel(indexId);
   if (p != FINGERPRINT_OK) {
     clearAndShowError("Storing failed", 2000);
-    registerPrintInit();
+    showRegisterHeader();
+    firstScanPrompted = false;
+    firstScanPrompted = false;
+    secondScanPrompted = false;
+    secondScanComplete = false;
     return;
   }
+
   idMap[indexId] = idToRegister;
   clearInput();
   lcd.setCursor(0, 1);
@@ -415,7 +451,6 @@ void removePrintInit() {
   lcd.print("REMOVE");
   keypad.flush();
   clearInput();
-  inputEnabled = true;
 }
 
 void removePrint() {
