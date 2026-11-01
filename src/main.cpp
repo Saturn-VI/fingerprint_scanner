@@ -35,7 +35,6 @@ enum class State {
 };
 
 String str = "";
-State lastState;
 State curState = State::Reading;
 // key: fingerprint id, value: id to type
 std::map<int, int> idMap;
@@ -43,7 +42,7 @@ std::map<int, int> idMap;
 void setup() {
   Keyboard.begin();
   Serial.begin(115200);
-  while(!Serial) {
+  while(!Serial && millis() < 5000) {
     delay(10);
   }
   Serial.println("Serial connected.");
@@ -83,7 +82,6 @@ void loop() {
     lcd.print(str);
   }
 
-  lastState = curState;
   curState = getCurrentState();
 
   switch (curState) {
@@ -110,7 +108,7 @@ bool textInputExpected() {
 
 int getFirstOpenID() {
   if (idMap.empty()) {
-    return 0;
+    return 1;
   }
 
   int expectedKey = 1;
@@ -123,7 +121,7 @@ int getFirstOpenID() {
   // id range up to end of map is packed
   // so we get the last index plus one
   // which is equivalent to the size of the id map
-  return idMap.size();
+  return idMap.size() + 1;
 }
 
 void clearInput() {
@@ -197,8 +195,8 @@ State getCurrentState() {
     return State::Reading;
   }
 
-  // immediately quit as state change must have at least *, char, and #
-  if (str.length() < 3) {
+  // immediately quit as state change must be *X# where X is code
+  if (str.length() != 3) {
     return curState;
   }
 
@@ -213,16 +211,20 @@ State getCurrentState() {
   }
 
   char commandChar = str.charAt(1);
-  str = "";
-  lcd.clear();
   switch (commandChar) {
     case '1':
+      str = "";
+      lcd.clear();
       readPrintInit();
       return State::Reading;
     case '2':
+      str = "";
+      lcd.clear();
       registerPrintInit();
       return State::Registering;
     case '3':
+      str = "";
+      lcd.clear();
       removePrintInit();
       return State::Removing;
     default:
@@ -244,6 +246,7 @@ int getTypedId() {
   std::from_chars_result fCR = std::from_chars(start, end, value);
   if (fCR.ec == std::errc::invalid_argument ||
     fCR.ec == std::errc::result_out_of_range ||
+    fCR.ptr != end ||
     value == 0
   ) {
     return -2;
@@ -438,7 +441,7 @@ void registerPrint() {
     clearAndShowError("Bad print match", 2000);
     showRegisterHeader();
     firstScanPrompted = false;
-    firstScanPrompted = false;
+    firstScanComplete = false;
     secondScanPrompted = false;
     secondScanComplete = false;
     return;
@@ -450,7 +453,7 @@ void registerPrint() {
     clearAndShowError("Storing failed", 2000);
     showRegisterHeader();
     firstScanPrompted = false;
-    firstScanPrompted = false;
+    firstScanComplete = false;
     secondScanPrompted = false;
     secondScanComplete = false;
     return;
@@ -577,6 +580,7 @@ void removePrint() {
       showRemoveHeader();
       return;
     }
+    idMap.erase(idToRemove);
     clearInput();
     lcd.setCursor(0, 1);
     lcd.print("Deleted!");
@@ -584,6 +588,14 @@ void removePrint() {
     delay(2000);
     curState = State::Reading;
     readPrintInit();
+    return;
+  }
+
+  // invalid enter = reject
+  if (str.endsWith("#")) {
+    clearAndShowError("Invalid response", 2000);
+    confirmationPrompted = false;
+    showRemoveHeader();
     return;
   }
 }
