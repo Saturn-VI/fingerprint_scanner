@@ -238,7 +238,7 @@ void readPrint() {
     readPrintInit();
     return;
   }
-  if (finger.confidence < 100) {
+  if (finger.confidence < 50) {
     clearAndShowError("Low confidence", 2000);
     readPrintInit();
     return;
@@ -247,12 +247,11 @@ void readPrint() {
   int foundId = finger.fingerID;
   int actualId = idMap[foundId];
 
-  // todo print id to screen
-  // todo print id to serial
-  // todo type ID
-  
-  // type id if match
-  // error on screen if not
+  String message = "Found " + String(actualId);
+  lcd.setCursor(0, 1);
+  lcd.print(message);
+  Serial.println(message);
+  Keyboard.println(actualId);
 }
 
 boolean idPrompted;
