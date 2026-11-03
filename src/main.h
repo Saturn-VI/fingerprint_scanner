@@ -2,6 +2,9 @@ enum class State;
 void updateTypedString();
 State getCurrentState();
 
+bool saveMapToFlash();
+bool loadMapFromFlash();
+
 bool textInputExpected();
 
 void readPrintInit();

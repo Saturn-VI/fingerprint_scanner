@@ -1,4 +1,6 @@
 #include <Arduino.h>
+#include <FS.h>
+#include <LittleFS.h>
 #include "Adafruit_Fingerprint.h"
 #include "Adafruit_LiquidCrystal.h"
 #include "Adafruit_TCA8418.h"
@@ -24,6 +26,8 @@ char keymap[COLS][ROWS] = {
 
 #define fingerprintSerial Serial1
 
+const char* filename = "/map.dat";
+
 Adafruit_LiquidCrystal lcd(0);
 Adafruit_TCA8418 keypad;
 Adafruit_Fingerprint finger = Adafruit_Fingerprint(&fingerprintSerial);
@@ -37,7 +41,7 @@ enum class State {
 String str = "";
 State curState = State::Reading;
 // key: fingerprint id, value: id to type
-std::map<int, int> idMap;
+std::map<uint8_t, uint32_t> idMap;
 
 void setup() {
   Keyboard.begin();
@@ -46,6 +50,13 @@ void setup() {
     delay(10);
   }
   Serial.println("Serial connected.");
+
+  if (!LittleFS.begin()) {
+    LittleFS.format();
+    LittleFS.begin();
+  }
+
+  loadMapFromFlash();
 
   // set up the LCD's number of rows and columns:
   if (!lcd.begin(16, 2)) {
@@ -67,8 +78,11 @@ void setup() {
     Serial.println("Did not find fingerprint sensor :(");
     while (1);
   }
-  // Remove once fingerprints are saved to flash
-  finger.emptyDatabase();
+
+  // Code to forcibly clear everything persistent
+  // finger.emptyDatabase();
+  // idMap.clear();
+  // saveMapToFlash();
 
   Serial.println("LCD, keypad, & fingerprint sensor init'd.");
 
@@ -95,6 +109,62 @@ void loop() {
       removePrint();
       break;
   }
+}
+
+bool saveMapToFlash() {
+  File file = LittleFS.open(filename, "w");
+  if (!file) {
+    Serial.println("Couldn't open map for writing");
+    return false;
+  }
+
+  uint8_t totalElements = idMap.size();
+  file.write((uint8_t*)&totalElements, sizeof(totalElements));
+
+  for (const auto& [key, value] : idMap) {
+    file.write((uint8_t*)&key, sizeof(key));
+    file.write((uint8_t*)&value, sizeof(value));
+  }
+
+  file.close();
+  Serial.println("Saved map to flash");
+  return true;
+}
+
+bool loadMapFromFlash() {
+  idMap.clear();
+
+  if (!LittleFS.exists(filename)) {
+    Serial.println("No saved map found");
+    return false;
+  }
+
+  File file = LittleFS.open(filename, "r");
+  if (!file) {
+    Serial.println("Failed to open map file");
+    return false;
+  }
+
+  uint8_t totalElements = 0;
+  if (file.read((uint8_t*)&totalElements, sizeof(totalElements)) != sizeof(totalElements)) {
+    Serial.println("File corrupted");
+    file.close();
+    return false;
+  }
+
+  for (uint8_t i = 0; i < totalElements; i++) {
+    uint8_t key = 0;
+    uint32_t value = 0;
+
+    file.read((uint8_t*)&key, sizeof(key));
+    file.read((uint8_t*)&value, sizeof(value));
+
+    idMap[key] = value;
+  }
+
+  file.close();
+  Serial.println("Loaded map from flash");
+  return true;
 }
 
 bool textInputExpected() {
@@ -460,6 +530,13 @@ void registerPrint() {
   }
 
   idMap[indexId] = idToRegister;
+  bool savedSuccessfully = saveMapToFlash();
+  if (!savedSuccessfully) {
+    // womp womp
+    clearAndShowError("Storing failed", 2000);
+    registerPrintInit();
+    return;
+  }
   clearInput();
   lcd.setCursor(0, 1);
   lcd.print("Saved print!");
@@ -581,6 +658,13 @@ void removePrint() {
       return;
     }
     idMap.erase(idToRemove);
+    bool savedSuccessfully = saveMapToFlash();
+    if (!savedSuccessfully) {
+      // womp womp
+      clearAndShowError("Storing failed", 2000);
+      removePrintInit();
+      return;
+    }
     clearInput();
     lcd.setCursor(0, 1);
     lcd.print("Deleted!");
